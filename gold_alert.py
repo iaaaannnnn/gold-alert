@@ -163,22 +163,53 @@ Respond ONLY in this exact JSON format, nothing else, no markdown fences:
 
 
 # ---------- Step 4: Email via Resend ----------
-def send_alert_email(price, ma, deviation_pct, sentiment, reasoning, headlines):
-    subject = f"🟡 Gold Buy Signal: ${price:.2f} ({deviation_pct:.1f}% below 50-day MA)"
+def send_status_email(
+    price,
+    ma,
+    deviation_pct,
+    is_buy_signal,
+    sentiment=None,
+    reasoning=None,
+    headlines=None,
+):
+    """
+    Sends a daily status email either way.
+    - is_buy_signal=True  -> labeled as a potential buy signal
+    - is_buy_signal=False -> labeled as no potential buy, still shows the numbers
+    """
+    headlines = headlines or []
 
-    headlines_html = "".join(f"<li>{h[2:]}</li>" for h in headlines[:8])
+    if is_buy_signal:
+        subject = f"🟢 Potential Buy Signal: ${price:.2f} ({deviation_pct:.1f}% below 50-day MA)"
+        heading = "Potential Long-Term Gold Buy Signal"
+    else:
+        subject = f"⚪ No Potential Buy: ${price:.2f} ({deviation_pct:.1f}% vs 50-day MA)"
+        heading = "No Potential Buy Today"
 
-    html_body = f"""
-    <h2>Potential Long-Term Gold Buy Signal</h2>
-    <p><b>Current price:</b> ${price:.2f}</p>
-    <p><b>50-day moving average:</b> ${ma:.2f}</p>
-    <p><b>Deviation:</b> {deviation_pct:.2f}% below average</p>
+    sentiment_block = ""
+    headlines_block = ""
+    if sentiment is not None:
+        sentiment_block = f"""
     <p><b>AI sentiment read:</b> {sentiment.upper()}</p>
     <p><b>Reasoning:</b> {reasoning}</p>
+    """
+    if headlines:
+        headlines_html = "".join(f"<li>{h[2:]}</li>" for h in headlines[:8])
+        headlines_block = f"""
     <h3>Headlines considered:</h3>
     <ul>{headlines_html}</ul>
+    """
+
+    html_body = f"""
+    <h2>{heading}</h2>
+    <p><b>Current price:</b> ${price:.2f}</p>
+    <p><b>50-day moving average:</b> ${ma:.2f}</p>
+    <p><b>Deviation:</b> {deviation_pct:.2f}% {'below' if deviation_pct < 0 else 'above'} average</p>
+    <p><b>Buy threshold:</b> -{DIP_THRESHOLD_PCT}% below 50-day MA</p>
+    {sentiment_block}
+    {headlines_block}
     <p style="color:gray;font-size:12px;">
-      This is an automated signal based on price and news heuristics only.
+      This is an automated daily check based on price and news heuristics only.
       Not financial advice — do your own research before trading.
     </p>
     """
@@ -196,7 +227,7 @@ def send_alert_email(price, ma, deviation_pct, sentiment, reasoning, headlines):
 
     resp = requests.post(RESEND_BASE, headers=headers, json=payload, timeout=20)
     resp.raise_for_status()
-    print("Alert email sent successfully.")
+    print(f"Email sent successfully ({'BUY SIGNAL' if is_buy_signal else 'no signal'}).")
 
 
 # ---------- Main ----------
@@ -222,8 +253,9 @@ def main():
     if deviation_pct > -DIP_THRESHOLD_PCT:
         print(
             f"Deviation ({deviation_pct:.2f}%) does not meet the "
-            f"-{DIP_THRESHOLD_PCT}% threshold. No alert."
+            f"-{DIP_THRESHOLD_PCT}% threshold. Sending 'no potential buy' email."
         )
+        send_status_email(price, ma, deviation_pct, is_buy_signal=False)
         sys.exit(0)
 
     print("Threshold met. Fetching news...")
@@ -237,9 +269,16 @@ def main():
     print(f"Sentiment: {sentiment} | Reasoning: {reasoning}")
 
     if sentiment in ("bullish", "neutral"):
-        send_alert_email(price, ma, deviation_pct, sentiment, reasoning, headlines)
+        send_status_email(
+            price, ma, deviation_pct, is_buy_signal=True,
+            sentiment=sentiment, reasoning=reasoning, headlines=headlines,
+        )
     else:
-        print("Sentiment is bearish. No alert sent (dip may reflect further decline).")
+        print("Sentiment is bearish. Sending 'no potential buy' email (dip may reflect further decline).")
+        send_status_email(
+            price, ma, deviation_pct, is_buy_signal=False,
+            sentiment=sentiment, reasoning=reasoning, headlines=headlines,
+        )
 
 
 if __name__ == "__main__":
